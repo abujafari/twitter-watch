@@ -1,0 +1,74 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:15.1-alpine3.17
+    restart: unless-stopped
+    environment:
+      - "POSTGRES_USER=${DATABASE_USER}"
+      - "POSTGRES_PASSWORD=${DATABASE_PASSWORD}"
+      - "POSTGRES_DB=${DATABASE_NAME}"
+    ports:
+      - '${DATABASE_PORT}:5432'
+    volumes:
+      - db:/var/lib/postgresql/data
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis:/data
+
+  minio:
+    image: minio/minio
+    hostname: minio
+    command: server --console-address :9001 /data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio:/data
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+      MINIO_DOMAIN: minio
+      MINIO_SERVER_ACCESS_KEY: "minio"
+      MINIO_SERVER_SECRET_KEY: "12345678"
+
+  minio-createbuckets:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add myminio http://minio:9000 minio ${MINIO_PASSWORD};
+      /usr/bin/mc rm -r --force myminio/files;
+      /usr/bin/mc mb myminio/files;
+      /usr/bin/mc policy set public myminio/files;
+      exit 0;
+      "
+  beat:
+    image: ruya-code
+    env_file: ./.env-docker
+    depends_on:
+      - redis
+      - db
+    volumes:
+      - ./:/src
+    command: "python -m celery -A core beat -l INFO"
+  worker:
+    image: ruya-code
+    env_file: ./.env-docker
+    volumes:
+      - ./:/src
+    depends_on:
+      - redis
+      - db
+    command: "python -m celery -A core worker -l INFO"
+volumes:
+  db:
+    driver: local
+  redis:
+    driver: local
+  minio:
+    driver: local
